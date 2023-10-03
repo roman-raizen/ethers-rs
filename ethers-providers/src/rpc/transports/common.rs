@@ -8,11 +8,12 @@ use ethers_core::{
 use jsonwebtoken::{encode, errors::Error, get_current_timestamp, Algorithm, EncodingKey, Header};
 use serde::{
     de::{self, MapAccess, Unexpected, Visitor},
-    Deserialize, Serialize,
+    Deserialize, Serialize, Serializer
 };
-use serde_json::{value::RawValue, Value};
+use serde_json::{value::RawValue, Value, json};
 use std::fmt;
 use thiserror::Error;
+use serde::ser::SerializeStruct;
 
 /// A JSON-RPC 2.0 error
 #[derive(Deserialize, Debug, Clone, Error)]
@@ -74,18 +75,44 @@ impl fmt::Display for JsonRpcError {
     }
 }
 
-fn is_zst<T>(_t: &T) -> bool {
-    std::mem::size_of::<T>() == 0
-}
+// fn is_zst<T>(_t: &T) -> bool {
+//     std::mem::size_of::<T>() == 0
+// }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 /// A JSON-RPC request
 pub struct Request<'a, T> {
     id: u64,
     jsonrpc: &'a str,
     method: &'a str,
-    #[serde(skip_serializing_if = "is_zst")]
+    // #[serde(skip_serializing_if = "is_zst")]
     params: T,
+}
+
+impl<'a, T: Sized> Serialize for Request<'a, T>
+where
+    T: Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Serialize params to a temporary JSON value
+        let tmp_params = serde_json::to_value(&self.params).unwrap_or(json!(null));
+
+        let mut s = serializer.serialize_struct("Request", 4)?;
+
+        s.serialize_field("id", &self.id)?;
+        s.serialize_field("jsonrpc", &self.jsonrpc)?;
+        s.serialize_field("method", &self.method)?;
+
+        // Only include 'params' if it's not null
+        if !tmp_params.is_null() {
+            s.serialize_field("params", &tmp_params)?;
+        }
+
+        s.end()
+    }
 }
 
 impl<'a, T> Request<'a, T> {
